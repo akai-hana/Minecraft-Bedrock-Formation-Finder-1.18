@@ -8,9 +8,14 @@ import java.util.stream.IntStream;
 
 public class Main {
 
-    static BedrockBlock[] blocks;
-    static double[]       bProbabilities;
-    static int            blockCount;
+    // Block data in parallel primitive arrays: no object headers, no pointer
+    // indirection, stride-1 layout — all arrays fit together in cache lines.
+    static int[]     bxs;
+    static int[]     bys;
+    static int[]     bzs;
+    static boolean[] bShouldBeBedrock;
+    static double[]  bProbabilities;
+    static int       blockCount;
 
     static long deriverSeedLo;
     static long deriverSeedHi;
@@ -40,10 +45,19 @@ public class Main {
         deriverSeedHi = bedrockReader.deriverSeedHi;
 
         int n = rawBlocks.size();
-        BedrockBlock[] tempBlocks = rawBlocks.toArray(new BedrockBlock[0]);
-        double[] tempPr = new double[n];
+        int[]     txs  = new int[n];
+        int[]     tys  = new int[n];
+        int[]     tzs  = new int[n];
+        boolean[] tSBB = new boolean[n];
+        double[]  tPr  = new double[n];
+
         for (int i = 0; i < n; i++) {
-            tempPr[i] = bedrockReader.computeProbability(tempBlocks[i].y);
+            BedrockBlock b = rawBlocks.get(i);
+            txs[i]  = b.x;
+            tys[i]  = b.y;
+            tzs[i]  = b.z;
+            tSBB[i] = b.shouldBeBedrock;
+            tPr[i]  = bedrockReader.computeProbability(b.y);
         }
 
         // Sort blocks by descending mismatch probability so wrong candidates
@@ -51,24 +65,31 @@ public class Main {
         Integer[] order = new Integer[n];
         for (int i = 0; i < n; i++) order[i] = i;
         Arrays.sort(order, (a, b) -> {
-            double pa = clamp01(tempPr[a]);
-            double pb = clamp01(tempPr[b]);
-            double ma = tempBlocks[a].shouldBeBedrock ? (1.0 - pa) : pa;
-            double mb = tempBlocks[b].shouldBeBedrock ? (1.0 - pb) : pb;
+            double pa = clamp01(tPr[a]);
+            double pb = clamp01(tPr[b]);
+            double ma = tSBB[a] ? (1.0 - pa) : pa;
+            double mb = tSBB[b] ? (1.0 - pb) : pb;
             return Double.compare(mb, ma);
         });
 
-        blocks         = new BedrockBlock[n];
-        bProbabilities = new double[n];
+        bxs            = new int[n];
+        bys            = new int[n];
+        bzs            = new int[n];
+        bShouldBeBedrock = new boolean[n];
+        bProbabilities   = new double[n];
         for (int i = 0; i < n; i++) {
-            blocks[i]         = tempBlocks[order[i]];
-            bProbabilities[i] = tempPr[order[i]];
+            int j              = order[i];
+            bxs[i]             = txs[j];
+            bys[i]             = tys[j];
+            bzs[i]             = tzs[j];
+            bShouldBeBedrock[i] = tSBB[j];
+            bProbabilities[i]   = tPr[j];
         }
         blockCount = n;
 
         for (int i = 0; i < n; i++) {
-            System.out.println("BedrockBlock{x=" + blocks[i].x + ", y=" + blocks[i].y
-                    + ", z=" + blocks[i].z + ", shouldBeBedrock=" + blocks[i].shouldBeBedrock
+            System.out.println("BedrockBlock{x=" + bxs[i] + ", y=" + bys[i]
+                    + ", z=" + bzs[i] + ", shouldBeBedrock=" + bShouldBeBedrock[i]
                     + ", p=" + String.format("%.3f", clamp01(bProbabilities[i])) + "}");
         }
 
@@ -124,19 +145,21 @@ public class Main {
     }
 
     static boolean checkFormation(int x, int z) {
-        // Capture statics as finals so each thread works on an immutable snapshot
-        // with no risk of seeing a partially-updated state between writes.
-        final long           slo   = deriverSeedLo;
-        final long           shi   = deriverSeedHi;
-        final int            cnt   = blockCount;
-        final BedrockBlock[] bs    = blocks;
-        final double[]       probs = bProbabilities;
+        // Capture statics as finals so each thread works on an immutable snapshot.
+        final long     slo   = deriverSeedLo;
+        final long     shi   = deriverSeedHi;
+        final int      cnt   = blockCount;
+        final int[]    xs    = bxs;
+        final int[]    ys    = bys;
+        final int[]    zs    = bzs;
+        final boolean[] sbb  = bShouldBeBedrock;
+        final double[]  probs = bProbabilities;
         for (int i = 0; i < cnt; i++) {
             boolean bedrock = BedrockReader.inlinedIsBedrock(
                     slo, shi,
-                    x + bs[i].x, bs[i].y, z + bs[i].z,
+                    x + xs[i], ys[i], z + zs[i],
                     probs[i]);
-            if (bs[i].shouldBeBedrock != bedrock) return false;
+            if (sbb[i] != bedrock) return false;
         }
         return true;
     }
