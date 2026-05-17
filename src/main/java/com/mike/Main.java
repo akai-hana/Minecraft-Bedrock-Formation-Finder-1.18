@@ -2,109 +2,141 @@ package com.mike;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
+import java.util.OptionalInt;
+import java.util.stream.IntStream;
 
 public class Main {
-    static ArrayList<BedrockBlock> blocks = new ArrayList<>();
-    static BedrockReader bedrockReader;
 
-    static long   deriverSeedLo;
-    static long   deriverSeedHi;
-    static BedrockReader.BedrockType bedrockType;
+    static BedrockBlock[] blocks;
+    static double[]       bProbabilities;
+    static int            blockCount;
 
-    static double[] bProbabilities;
+    static long deriverSeedLo;
+    static long deriverSeedHi;
+
+    static final int CHUNK_SIZE = 65_536;
 
     public static void main(String[] args) {
+
         long seed = Long.parseLong(args[0]);
 
         String[] coordinateString = args[1].split(":");
-        int x = Integer.parseInt(coordinateString[0]);
-        int z = Integer.parseInt(coordinateString[1]);
+        int startX = Integer.parseInt(coordinateString[0]);
+        int startZ = Integer.parseInt(coordinateString[1]);
 
-        bedrockType = switch (args[2]) {
+        BedrockReader.BedrockType bedrockType = switch (args[2]) {
             case "floor" -> BedrockReader.BedrockType.BEDROCK_FLOOR;
             case "roof"  -> BedrockReader.BedrockType.BEDROCK_ROOF;
             default      -> BedrockReader.BedrockType.BEDROCK_FLOOR;
         };
 
-        Arrays.stream(args).skip(3).forEach((arg) -> blocks.add(new BedrockBlock(arg)));
-        if (blocks.size() == 0) return;
+        List<BedrockBlock> rawBlocks = new ArrayList<>();
+        Arrays.stream(args).skip(3).forEach(arg -> rawBlocks.add(new BedrockBlock(arg)));
+        if (rawBlocks.isEmpty()) return;
 
-        bedrockReader = new BedrockReader(seed, bedrockType);
+        BedrockReader bedrockReader = new BedrockReader(seed, bedrockType);
         deriverSeedLo = bedrockReader.deriverSeedLo;
         deriverSeedHi = bedrockReader.deriverSeedHi;
 
-        // Pre-compute probabilities before sorting so we can rank by them.
-        double[] rawProb = new double[blocks.size()];
-        for (int i = 0; i < blocks.size(); i++)
-            rawProb[i] = bedrockReader.computeProbability(blocks.get(i).y);
+        int n = rawBlocks.size();
+        BedrockBlock[] tempBlocks = rawBlocks.toArray(new BedrockBlock[0]);
+        double[] tempPr = new double[n];
+        for (int i = 0; i < n; i++) {
+            tempPr[i] = bedrockReader.computeProbability(tempBlocks[i].y);
+        }
 
-        // Sort blocks by descending mismatch probability so checkFormation
-        // short-circuits as early as possible on wrong candidate positions.
-        Integer[] order = new Integer[blocks.size()];
-        for (int i = 0; i < order.length; i++) order[i] = i;
+        // Sort blocks by descending mismatch probability so wrong candidates
+        // are rejected as early as possible (fewest isBedrock calls per position).
+        Integer[] order = new Integer[n];
+        for (int i = 0; i < n; i++) order[i] = i;
         Arrays.sort(order, (a, b) -> {
-            double pa = clamp01(rawProb[a]);
-            double pb = clamp01(rawProb[b]);
-            double ma = blocks.get(a).shouldBeBedrock ? (1.0 - pa) : pa;
-            double mb = blocks.get(b).shouldBeBedrock ? (1.0 - pb) : pb;
+            double pa = clamp01(tempPr[a]);
+            double pb = clamp01(tempPr[b]);
+            double ma = tempBlocks[a].shouldBeBedrock ? (1.0 - pa) : pa;
+            double mb = tempBlocks[b].shouldBeBedrock ? (1.0 - pb) : pb;
             return Double.compare(mb, ma);
         });
 
-        ArrayList<BedrockBlock> sortedBlocks = new ArrayList<>();
-        bProbabilities = new double[blocks.size()];
-        for (int i = 0; i < order.length; i++) {
-            sortedBlocks.add(blocks.get(order[i]));
-            bProbabilities[i] = rawProb[order[i]];
+        blocks         = new BedrockBlock[n];
+        bProbabilities = new double[n];
+        for (int i = 0; i < n; i++) {
+            blocks[i]         = tempBlocks[order[i]];
+            bProbabilities[i] = tempPr[order[i]];
         }
-        blocks = sortedBlocks;
+        blockCount = n;
 
-        blocks.forEach(System.out::println);
+        for (int i = 0; i < n; i++) {
+            System.out.println("BedrockBlock{x=" + blocks[i].x + ", y=" + blocks[i].y
+                    + ", z=" + blocks[i].z + ", shouldBeBedrock=" + blocks[i].shouldBeBedrock
+                    + ", p=" + String.format("%.3f", clamp01(bProbabilities[i])) + "}");
+        }
 
+        int x = startX;
+        int z = startZ;
         Direction direction = Direction.RIGHT;
-        int stepsToTake = 1;
-        int stepsTaken = 0;
-        int sidesUntilIncremental = 0;
+        int stepsToTake = 1, stepsTaken = 0, sidesUntilIncremental = 0;
 
+        int[] chunkX = new int[CHUNK_SIZE];
+        int[] chunkZ = new int[CHUNK_SIZE];
+
+        outer:
         while (true) {
-            if (checkFormation(x, z)) {
-                System.out.println("Found Bedrock Formation at X:" + x + " Z:" + z);
-                break;
-            }
+            int filled = 0;
+            while (filled < CHUNK_SIZE) {
+                chunkX[filled] = x;
+                chunkZ[filled] = z;
+                filled++;
 
-            if (stepsTaken >= stepsToTake) {
-                stepsTaken = 0;
-                sidesUntilIncremental++;
-                switch (direction) {
-                    case LEFT  -> direction = Direction.DOWN;
-                    case RIGHT -> direction = Direction.UP;
-                    case UP    -> direction = Direction.LEFT;
-                    case DOWN  -> direction = Direction.RIGHT;
+                if (stepsTaken >= stepsToTake) {
+                    stepsTaken = 0;
+                    sidesUntilIncremental++;
+                    direction = direction.next();
                 }
+                if (sidesUntilIncremental > 2) {
+                    sidesUntilIncremental = 0;
+                    stepsToTake++;
+                }
+                switch (direction) {
+                    case LEFT  -> x--;
+                    case RIGHT -> x++;
+                    case UP    -> z++;
+                    case DOWN  -> z--;
+                }
+                stepsTaken++;
             }
 
-            if (sidesUntilIncremental > 2) {
-                sidesUntilIncremental = 0;
-                stepsToTake++;
-            }
+            final int   batchSize = filled;
+            final int[] bx = chunkX;
+            final int[] bz = chunkZ;
 
-            switch (direction) {
-                case LEFT  -> x--;
-                case RIGHT -> x++;
-                case UP    -> z++;
-                case DOWN  -> z--;
+            OptionalInt match = IntStream.range(0, batchSize)
+                    .parallel()
+                    .filter(i -> checkFormation(bx[i], bz[i]))
+                    .findFirst();
+
+            if (match.isPresent()) {
+                int idx = match.getAsInt();
+                System.out.println("Found Bedrock Formation at X:" + bx[idx] + " Z:" + bz[idx]);
+                break outer;
             }
-            stepsTaken++;
         }
     }
 
     static boolean checkFormation(int x, int z) {
-        for (int i = 0; i < blocks.size(); i++) {
-            BedrockBlock block = blocks.get(i);
+        // Capture statics as finals so each thread works on an immutable snapshot
+        // with no risk of seeing a partially-updated state between writes.
+        final long           slo   = deriverSeedLo;
+        final long           shi   = deriverSeedHi;
+        final int            cnt   = blockCount;
+        final BedrockBlock[] bs    = blocks;
+        final double[]       probs = bProbabilities;
+        for (int i = 0; i < cnt; i++) {
             boolean bedrock = BedrockReader.inlinedIsBedrock(
-                    deriverSeedLo, deriverSeedHi,
-                    x + block.x, block.y, z + block.z,
-                    bProbabilities[i]);
-            if (block.shouldBeBedrock != bedrock) return false;
+                    slo, shi,
+                    x + bs[i].x, bs[i].y, z + bs[i].z,
+                    probs[i]);
+            if (bs[i].shouldBeBedrock != bedrock) return false;
         }
         return true;
     }
@@ -114,9 +146,15 @@ public class Main {
     }
 
     enum Direction {
-        LEFT,
-        RIGHT,
-        UP,
-        DOWN
+        LEFT, RIGHT, UP, DOWN;
+
+        Direction next() {
+            return switch (this) {
+                case LEFT  -> Direction.DOWN;
+                case RIGHT -> Direction.UP;
+                case UP    -> Direction.LEFT;
+                case DOWN  -> Direction.RIGHT;
+            };
+        }
     }
 }
