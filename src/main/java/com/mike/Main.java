@@ -11,8 +11,6 @@ public class Main {
     static long   deriverSeedHi;
     static BedrockReader.BedrockType bedrockType;
 
-    // Probability pre-computed once per block at startup; indexed in the same
-    // order as the blocks list.
     static double[] bProbabilities;
 
     public static void main(String[] args) {
@@ -43,8 +41,6 @@ public class Main {
         deriverSeedLo = bedrockReader.deriverSeedLo;
         deriverSeedHi = bedrockReader.deriverSeedHi;
 
-        // Pre-compute the Y-level probability for every block once here so
-        // checkFormation never repeats the lerp math during the search.
         bProbabilities = new double[blocks.size()];
         for (int i = 0; i < blocks.size(); i++)
             bProbabilities[i] = bedrockReader.computeProbability(blocks.get(i).y);
@@ -87,12 +83,12 @@ public class Main {
     }
 
     static boolean checkFormation(int x, int z) {
-        int i = 0;
-        for (BedrockBlock block : blocks) {
+        for (int i = 0; i < blocks.size(); i++) {
+            BedrockBlock block = blocks.get(i);
             boolean bedrock = BedrockReader.inlinedIsBedrock(
                     deriverSeedLo, deriverSeedHi,
                     x + block.x, block.y, z + block.z,
-                    bProbabilities[i++]);
+                    bProbabilities[i]);
             if (block.shouldBeBedrock != bedrock) return false;
         }
         return true;
