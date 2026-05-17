@@ -2,8 +2,6 @@ package com.mike;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.OptionalInt;
-import java.util.stream.IntStream;
 
 public class Main {
     static ArrayList<BedrockBlock> blocks = new ArrayList<>();
@@ -14,11 +12,6 @@ public class Main {
     static BedrockReader.BedrockType bedrockType;
 
     static double[] bProbabilities;
-
-    // Positions are checked in batches so the parallel stream has enough work
-    // to distribute across cores without the overhead of spawning a new task
-    // per spiral step.
-    static final int CHUNK_SIZE = 65_536;
 
     public static void main(String[] args) {
         long seed = Long.parseLong(args[0]);
@@ -40,10 +33,13 @@ public class Main {
         deriverSeedLo = bedrockReader.deriverSeedLo;
         deriverSeedHi = bedrockReader.deriverSeedHi;
 
+        // Pre-compute probabilities before sorting so we can rank by them.
         double[] rawProb = new double[blocks.size()];
         for (int i = 0; i < blocks.size(); i++)
             rawProb[i] = bedrockReader.computeProbability(blocks.get(i).y);
 
+        // Sort blocks by descending mismatch probability so checkFormation
+        // short-circuits as early as possible on wrong candidate positions.
         Integer[] order = new Integer[blocks.size()];
         for (int i = 0; i < order.length; i++) order[i] = i;
         Arrays.sort(order, (a, b) -> {
@@ -69,57 +65,35 @@ public class Main {
         int stepsTaken = 0;
         int sidesUntilIncremental = 0;
 
-        int[] chunkX = new int[CHUNK_SIZE];
-        int[] chunkZ = new int[CHUNK_SIZE];
-
-        outer:
         while (true) {
-            // Fill one batch of spiral positions.
-            int filled = 0;
-            while (filled < CHUNK_SIZE) {
-                chunkX[filled] = x;
-                chunkZ[filled] = z;
-                filled++;
+            if (checkFormation(x, z)) {
+                System.out.println("Found Bedrock Formation at X:" + x + " Z:" + z);
+                break;
+            }
 
-                if (stepsTaken >= stepsToTake) {
-                    stepsTaken = 0;
-                    sidesUntilIncremental++;
-                    switch (direction) {
-                        case LEFT  -> direction = Direction.DOWN;
-                        case RIGHT -> direction = Direction.UP;
-                        case UP    -> direction = Direction.LEFT;
-                        case DOWN  -> direction = Direction.RIGHT;
-                    }
-                }
-                if (sidesUntilIncremental > 2) {
-                    sidesUntilIncremental = 0;
-                    stepsToTake++;
-                }
+            if (stepsTaken >= stepsToTake) {
+                stepsTaken = 0;
+                sidesUntilIncremental++;
                 switch (direction) {
-                    case LEFT  -> x--;
-                    case RIGHT -> x++;
-                    case UP    -> z++;
-                    case DOWN  -> z--;
+                    case LEFT  -> direction = Direction.DOWN;
+                    case RIGHT -> direction = Direction.UP;
+                    case UP    -> direction = Direction.LEFT;
+                    case DOWN  -> direction = Direction.RIGHT;
                 }
-                stepsTaken++;
             }
 
-            // Check the batch in parallel. findFirst() preserves encounter
-            // order, so the result is always the closest match to the origin.
-            final int   batchSize = filled;
-            final int[] bx = chunkX;
-            final int[] bz = chunkZ;
-
-            OptionalInt match = IntStream.range(0, batchSize)
-                    .parallel()
-                    .filter(i -> checkFormation(bx[i], bz[i]))
-                    .findFirst();
-
-            if (match.isPresent()) {
-                int idx = match.getAsInt();
-                System.out.println("Found Bedrock Formation at X:" + bx[idx] + " Z:" + bz[idx]);
-                break outer;
+            if (sidesUntilIncremental > 2) {
+                sidesUntilIncremental = 0;
+                stepsToTake++;
             }
+
+            switch (direction) {
+                case LEFT  -> x--;
+                case RIGHT -> x++;
+                case UP    -> z++;
+                case DOWN  -> z--;
+            }
+            stepsTaken++;
         }
     }
 
