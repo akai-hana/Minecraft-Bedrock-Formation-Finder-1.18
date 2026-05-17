@@ -7,6 +7,10 @@ public class Main {
     static ArrayList<BedrockBlock> blocks = new ArrayList<>();
     static BedrockReader bedrockReader;
 
+    static long deriverSeedLo;
+    static long deriverSeedHi;
+    static BedrockReader.BedrockType bedrockType;
+
     public static void main(String[] args) {
         long seed = Long.parseLong(args[0]);
 
@@ -14,10 +18,10 @@ public class Main {
         int x = Integer.parseInt(coordinateString[0]);
         int z = Integer.parseInt(coordinateString[1]);
 
-        BedrockReader.BedrockType bedrockType = switch (args[2]) {
+        bedrockType = switch (args[2]) {
             case "floor" -> BedrockReader.BedrockType.BEDROCK_FLOOR;
-            case "roof" -> BedrockReader.BedrockType.BEDROCK_ROOF;
-            default -> BedrockReader.BedrockType.BEDROCK_FLOOR;
+            case "roof"  -> BedrockReader.BedrockType.BEDROCK_ROOF;
+            default      -> BedrockReader.BedrockType.BEDROCK_FLOOR;
         };
 
         Arrays.stream(args).skip(3).forEach((arg) -> blocks.add(new BedrockBlock(arg)));
@@ -36,6 +40,8 @@ public class Main {
         blocks.forEach(System.out::println);
 
         bedrockReader = new BedrockReader(seed, bedrockType);
+        deriverSeedLo = bedrockReader.deriverSeedLo;
+        deriverSeedHi = bedrockReader.deriverSeedHi;
 
         Direction direction = Direction.RIGHT;
         int stepsToTake = 1;
@@ -48,30 +54,27 @@ public class Main {
                 break;
             }
 
-            // Check for direction change
             if (stepsTaken >= stepsToTake) {
                 stepsTaken = 0;
                 sidesUntilIncremental++;
                 switch (direction) {
-                    case LEFT -> direction = Direction.DOWN;
+                    case LEFT  -> direction = Direction.DOWN;
                     case RIGHT -> direction = Direction.UP;
-                    case UP -> direction = Direction.LEFT;
-                    case DOWN -> direction = Direction.RIGHT;
+                    case UP    -> direction = Direction.LEFT;
+                    case DOWN  -> direction = Direction.RIGHT;
                 }
             }
 
-            // Increase steps to take
             if (sidesUntilIncremental > 2) {
                 sidesUntilIncremental = 0;
                 stepsToTake++;
             }
 
-            // Make Step
             switch (direction) {
-                case LEFT -> x--;
+                case LEFT  -> x--;
                 case RIGHT -> x++;
-                case UP -> z++;
-                case DOWN -> z--;
+                case UP    -> z++;
+                case DOWN  -> z--;
             }
             stepsTaken++;
         }
@@ -79,7 +82,11 @@ public class Main {
 
     static boolean checkFormation(int x, int z) {
         for (BedrockBlock block : blocks) {
-            if (block.shouldBeBedrock != bedrockReader.isBedrock(x + block.x, block.y, z + block.z)) return false;
+            boolean bedrock = BedrockReader.inlinedIsBedrock(
+                    deriverSeedLo, deriverSeedHi,
+                    x + block.x, block.y, z + block.z,
+                    bedrockType);
+            if (block.shouldBeBedrock != bedrock) return false;
         }
         return true;
     }

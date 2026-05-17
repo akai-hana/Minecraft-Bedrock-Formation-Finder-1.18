@@ -25,7 +25,7 @@ public class Xoroshiro128PlusPlusRandom implements AbstractRandom {
     }
 
     @Override
-    public com.mike.extracted.RandomDeriver createRandomDeriver() {
+    public RandomDeriver createRandomDeriver() {
         return new RandomDeriver(this.implementation.next(), this.implementation.next());
     }
 
@@ -98,8 +98,8 @@ public class Xoroshiro128PlusPlusRandom implements AbstractRandom {
 
     public static class RandomDeriver implements com.mike.extracted.RandomDeriver {
         private static final HashFunction MD5_HASHER = Hashing.md5();
-        private final long seedLo;
-        private final long seedHi;
+        public final long seedLo;
+        public final long seedHi;
 
         public RandomDeriver(long seedLo, long seedHi) {
             this.seedLo = seedLo;
