@@ -7,9 +7,13 @@ public class Main {
     static ArrayList<BedrockBlock> blocks = new ArrayList<>();
     static BedrockReader bedrockReader;
 
-    static long deriverSeedLo;
-    static long deriverSeedHi;
+    static long   deriverSeedLo;
+    static long   deriverSeedHi;
     static BedrockReader.BedrockType bedrockType;
+
+    // Probability pre-computed once per block at startup; indexed in the same
+    // order as the blocks list.
+    static double[] bProbabilities;
 
     public static void main(String[] args) {
         long seed = Long.parseLong(args[0]);
@@ -27,12 +31,8 @@ public class Main {
         Arrays.stream(args).skip(3).forEach((arg) -> blocks.add(new BedrockBlock(arg)));
         blocks.sort((b1, b2) -> {
             switch (bedrockType) {
-                case BEDROCK_FLOOR -> {
-                    return b1.y < b2.y ? 1 : -1;
-                }
-                case BEDROCK_ROOF -> {
-                    return b1.y < b2.y ? -1 : 1;
-                }
+                case BEDROCK_FLOOR -> { return b1.y < b2.y ? 1 : -1; }
+                case BEDROCK_ROOF  -> { return b1.y < b2.y ? -1 : 1; }
             }
             return 0;
         });
@@ -42,6 +42,12 @@ public class Main {
         bedrockReader = new BedrockReader(seed, bedrockType);
         deriverSeedLo = bedrockReader.deriverSeedLo;
         deriverSeedHi = bedrockReader.deriverSeedHi;
+
+        // Pre-compute the Y-level probability for every block once here so
+        // checkFormation never repeats the lerp math during the search.
+        bProbabilities = new double[blocks.size()];
+        for (int i = 0; i < blocks.size(); i++)
+            bProbabilities[i] = bedrockReader.computeProbability(blocks.get(i).y);
 
         Direction direction = Direction.RIGHT;
         int stepsToTake = 1;
@@ -81,11 +87,12 @@ public class Main {
     }
 
     static boolean checkFormation(int x, int z) {
+        int i = 0;
         for (BedrockBlock block : blocks) {
             boolean bedrock = BedrockReader.inlinedIsBedrock(
                     deriverSeedLo, deriverSeedHi,
                     x + block.x, block.y, z + block.z,
-                    bedrockType);
+                    bProbabilities[i++]);
             if (block.shouldBeBedrock != bedrock) return false;
         }
         return true;

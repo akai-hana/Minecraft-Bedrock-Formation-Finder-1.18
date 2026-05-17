@@ -1,6 +1,5 @@
 package com.mike;
 
-import com.mike.extracted.MathHelper;
 import com.mike.extracted.RandomProvider;
 import com.mike.extracted.Xoroshiro128PlusPlusRandom;
 import com.mike.recreated.Identifier;
@@ -29,23 +28,36 @@ public class BedrockReader {
     }
 
     /**
-     * Returns whether the block at (x, y, z) is bedrock.
-     * Performs the full probability computation and RNG step on the stack
-     * with no heap allocation.
+     * Pre-computes the bedrock probability for a block at the given Y level.
+     * Returns 2.0 (always bedrock) or -1.0 (never bedrock) at the boundaries,
+     * and a value in (0, 1) for layers in between.
+     * Call this once per block at startup and cache the result.
+     */
+    public double computeProbability(int y) {
+        int min = bedrockType.min;
+        int max = bedrockType.max;
+
+        if (bedrockType == BedrockType.BEDROCK_FLOOR) {
+            if (y == min) return 2.0;
+            if (y > max)  return -1.0;
+            return 1.0 - (double)(y - min) / (double)(max - min);
+        } else {
+            if (y == min) return 2.0;
+            if (y < max)  return -1.0;
+            return 1.0 - (double)(max - y) / (double)(max - min);
+        }
+    }
+
+    /**
+     * Returns whether the block at (x, y, z) is bedrock, given a probability
+     * pre-computed by {@link #computeProbability}.
+     * Performs the full RNG step on the stack with no heap allocation.
      */
     public static boolean inlinedIsBedrock(long deriverSeedLo, long deriverSeedHi,
                                            int x, int y, int z,
-                                           BedrockType type) {
-        double p;
-        if (type == BedrockType.BEDROCK_FLOOR) {
-            if (y == type.min) return true;
-            if (y > type.max)  return false;
-            p = MathHelper.lerpFromProgress(y, type.min, type.max, 1.0, 0.0);
-        } else {
-            if (y == type.min) return true;
-            if (y < type.max)  return false;
-            p = MathHelper.lerpFromProgress(y, type.max, type.min, 1.0, 0.0);
-        }
+                                           double probability) {
+        if (probability >= 1.0) return true;
+        if (probability <= 0.0) return false;
 
         long l = (long)(x * 3129871) ^ (long)z * 116129781L ^ (long)y;
         l = l * l * 42317861L + l * 11L;
@@ -62,11 +74,11 @@ public class BedrockReader {
         long result = Long.rotateLeft(s0 + s1, 17) + s0;
         float f = (float)(result >>> 40) * 5.9604645E-8f;
 
-        return (double) f < p;
+        return (double) f < probability;
     }
 
     boolean isBedrock(int x, int y, int z) {
-        return inlinedIsBedrock(deriverSeedLo, deriverSeedHi, x, y, z, bedrockType);
+        return inlinedIsBedrock(deriverSeedLo, deriverSeedHi, x, y, z, computeProbability(y));
     }
 
     public enum BedrockType {
