@@ -9,7 +9,12 @@ public class Xoroshiro128PlusPlusRandom implements AbstractRandom {
     private static final float FLOAT_MULTIPLIER = 5.9604645E-8f;
     private static final double DOUBLE_MULTIPLIER = (double) 1.110223E-16f;
     private Xoroshiro128PlusPlusRandomImpl implementation;
-    private final GaussianGenerator gaussianGenerator = new GaussianGenerator(this);
+    private GaussianGenerator gaussianGenerator;
+
+    private GaussianGenerator getGaussianGenerator() {
+        if (gaussianGenerator == null) gaussianGenerator = new GaussianGenerator(this);
+        return gaussianGenerator;
+    }
 
     public Xoroshiro128PlusPlusRandom(long seed) {
         this.implementation = new Xoroshiro128PlusPlusRandomImpl(RandomSeed.createXoroshiroSeed(seed));
@@ -32,7 +37,7 @@ public class Xoroshiro128PlusPlusRandom implements AbstractRandom {
     @Override
     public void setSeed(long l) {
         this.implementation = new Xoroshiro128PlusPlusRandomImpl(RandomSeed.createXoroshiroSeed(l));
-        this.gaussianGenerator.reset();
+        if (gaussianGenerator != null) gaussianGenerator.reset();
     }
 
     @Override
@@ -82,7 +87,7 @@ public class Xoroshiro128PlusPlusRandom implements AbstractRandom {
 
     @Override
     public double nextGaussian() {
-        return this.gaussianGenerator.next();
+        return this.getGaussianGenerator().next();
     }
 
     @Override
