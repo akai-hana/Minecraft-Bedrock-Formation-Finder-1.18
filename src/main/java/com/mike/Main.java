@@ -93,6 +93,11 @@ public class Main {
                     + ", p=" + String.format("%.3f", clamp01(bProbabilities[i])) + "}");
         }
 
+        // Drive the hot path through the JIT interpreter threshold before the
+        // real search begins, so the C2 compiler has already emitted native code
+        // (including Long.rotateLeft intrinsification) when the spiral starts.
+        warmup();
+
         int x = startX;
         int z = startZ;
         Direction direction = Direction.RIGHT;
@@ -162,6 +167,19 @@ public class Main {
             if (sbb[i] != bedrock) return false;
         }
         return true;
+    }
+
+    // Invoke the hot path ~20 000 times to cross the C2 compilation threshold
+    // before the spiral starts.  The dummy accumulator prevents dead-code elimination.
+    private static void warmup() {
+        long dummy = 0;
+        for (int i = 0; i < 20_000; i++) {
+            dummy += BedrockReader.inlinedIsBedrock(
+                    deriverSeedLo ^ i, deriverSeedHi ^ i,
+                    i, 0, i,
+                    0.5) ? 1 : 0;
+        }
+        if (dummy < 0) System.out.println("(warmup: " + dummy + ")");
     }
 
     private static double clamp01(double v) {
