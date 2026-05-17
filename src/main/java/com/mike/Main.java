@@ -2,6 +2,8 @@ package com.mike;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.OptionalInt;
+import java.util.stream.IntStream;
 
 public class Main {
     static ArrayList<BedrockBlock> blocks = new ArrayList<>();
@@ -12,6 +14,11 @@ public class Main {
     static BedrockReader.BedrockType bedrockType;
 
     static double[] bProbabilities;
+
+    // Positions are checked in batches so the parallel stream has enough work
+    // to distribute across cores without the overhead of spawning a new task
+    // per spiral step.
+    static final int CHUNK_SIZE = 65_536;
 
     public static void main(String[] args) {
         long seed = Long.parseLong(args[0]);
@@ -27,58 +34,92 @@ public class Main {
         };
 
         Arrays.stream(args).skip(3).forEach((arg) -> blocks.add(new BedrockBlock(arg)));
-        blocks.sort((b1, b2) -> {
-            switch (bedrockType) {
-                case BEDROCK_FLOOR -> { return b1.y < b2.y ? 1 : -1; }
-                case BEDROCK_ROOF  -> { return b1.y < b2.y ? -1 : 1; }
-            }
-            return 0;
-        });
         if (blocks.size() == 0) return;
-        blocks.forEach(System.out::println);
 
         bedrockReader = new BedrockReader(seed, bedrockType);
         deriverSeedLo = bedrockReader.deriverSeedLo;
         deriverSeedHi = bedrockReader.deriverSeedHi;
 
-        bProbabilities = new double[blocks.size()];
+        double[] rawProb = new double[blocks.size()];
         for (int i = 0; i < blocks.size(); i++)
-            bProbabilities[i] = bedrockReader.computeProbability(blocks.get(i).y);
+            rawProb[i] = bedrockReader.computeProbability(blocks.get(i).y);
+
+        Integer[] order = new Integer[blocks.size()];
+        for (int i = 0; i < order.length; i++) order[i] = i;
+        Arrays.sort(order, (a, b) -> {
+            double pa = clamp01(rawProb[a]);
+            double pb = clamp01(rawProb[b]);
+            double ma = blocks.get(a).shouldBeBedrock ? (1.0 - pa) : pa;
+            double mb = blocks.get(b).shouldBeBedrock ? (1.0 - pb) : pb;
+            return Double.compare(mb, ma);
+        });
+
+        ArrayList<BedrockBlock> sortedBlocks = new ArrayList<>();
+        bProbabilities = new double[blocks.size()];
+        for (int i = 0; i < order.length; i++) {
+            sortedBlocks.add(blocks.get(order[i]));
+            bProbabilities[i] = rawProb[order[i]];
+        }
+        blocks = sortedBlocks;
+
+        blocks.forEach(System.out::println);
 
         Direction direction = Direction.RIGHT;
         int stepsToTake = 1;
         int stepsTaken = 0;
         int sidesUntilIncremental = 0;
 
+        int[] chunkX = new int[CHUNK_SIZE];
+        int[] chunkZ = new int[CHUNK_SIZE];
+
+        outer:
         while (true) {
-            if (checkFormation(x, z)) {
-                System.out.println("Found Bedrock Formation at X:" + x + " Z:" + z);
-                break;
-            }
+            // Fill one batch of spiral positions.
+            int filled = 0;
+            while (filled < CHUNK_SIZE) {
+                chunkX[filled] = x;
+                chunkZ[filled] = z;
+                filled++;
 
-            if (stepsTaken >= stepsToTake) {
-                stepsTaken = 0;
-                sidesUntilIncremental++;
-                switch (direction) {
-                    case LEFT  -> direction = Direction.DOWN;
-                    case RIGHT -> direction = Direction.UP;
-                    case UP    -> direction = Direction.LEFT;
-                    case DOWN  -> direction = Direction.RIGHT;
+                if (stepsTaken >= stepsToTake) {
+                    stepsTaken = 0;
+                    sidesUntilIncremental++;
+                    switch (direction) {
+                        case LEFT  -> direction = Direction.DOWN;
+                        case RIGHT -> direction = Direction.UP;
+                        case UP    -> direction = Direction.LEFT;
+                        case DOWN  -> direction = Direction.RIGHT;
+                    }
                 }
+                if (sidesUntilIncremental > 2) {
+                    sidesUntilIncremental = 0;
+                    stepsToTake++;
+                }
+                switch (direction) {
+                    case LEFT  -> x--;
+                    case RIGHT -> x++;
+                    case UP    -> z++;
+                    case DOWN  -> z--;
+                }
+                stepsTaken++;
             }
 
-            if (sidesUntilIncremental > 2) {
-                sidesUntilIncremental = 0;
-                stepsToTake++;
-            }
+            // Check the batch in parallel. findFirst() preserves encounter
+            // order, so the result is always the closest match to the origin.
+            final int   batchSize = filled;
+            final int[] bx = chunkX;
+            final int[] bz = chunkZ;
 
-            switch (direction) {
-                case LEFT  -> x--;
-                case RIGHT -> x++;
-                case UP    -> z++;
-                case DOWN  -> z--;
+            OptionalInt match = IntStream.range(0, batchSize)
+                    .parallel()
+                    .filter(i -> checkFormation(bx[i], bz[i]))
+                    .findFirst();
+
+            if (match.isPresent()) {
+                int idx = match.getAsInt();
+                System.out.println("Found Bedrock Formation at X:" + bx[idx] + " Z:" + bz[idx]);
+                break outer;
             }
-            stepsTaken++;
         }
     }
 
@@ -92,6 +133,10 @@ public class Main {
             if (block.shouldBeBedrock != bedrock) return false;
         }
         return true;
+    }
+
+    private static double clamp01(double v) {
+        return Math.max(0.0, Math.min(1.0, v));
     }
 
     enum Direction {
